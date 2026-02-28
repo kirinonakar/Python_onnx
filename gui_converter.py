@@ -1,6 +1,7 @@
 import os
 import torch
 import torch.onnx
+import onnx
 import customtkinter as ctk
 import warnings
 import traceback
@@ -251,12 +252,7 @@ class ONNXConverterApp(ctk.CTk):
         self.update()
 
         try:
-            # 1. Initialize Model
-            model = self.get_model_instance(arch, scale, window_size, img_size=h)
-            if model is None:
-                raise ValueError(f"Unsupported architecture selected: {arch}")
-
-            # 2. Load weights
+            # 1. Load weights FIRST to detect parameters (like window size)
             if model_path.endswith(".safetensors"):
                 state_dict = load_safetensors(model_path, device="cpu")
             else:
@@ -274,7 +270,34 @@ class ONNXConverterApp(ctk.CTk):
                 name = k[7:] if k.startswith('module.') else k
                 new_state_dict[name] = v
             
-            # Load weights
+            # 2. Auto-detect window size for HAT or SwinIR
+            if ("HAT" in arch or "SwinIR" in arch):
+                detected_win = None
+                for k, v in new_state_dict.items():
+                    # Look for relative_position_bias_table to infer window size
+                    if 'relative_position_bias_table' in k and 'overlap_attn' not in k:
+                        try:
+                            # (2*w - 1)**2 = v.shape[0]
+                            size = int(v.shape[0]**0.5)
+                            detected_win = (size + 1) // 2
+                            break
+                        except:
+                            continue
+                
+                if detected_win and detected_win != window_size:
+                    self.status_label.configure(text=f"ADJUSTING WINDOW SIZE TO {detected_win}...", text_color="#fbbf24")
+                    window_size = detected_win
+                    # Update UI for visibility
+                    self.win_entry.delete(0, "end")
+                    self.win_entry.insert(0, str(window_size))
+                    self.update()
+
+            # 3. Initialize Model with correct parameters
+            model = self.get_model_instance(arch, scale, window_size, img_size=h)
+            if model is None:
+                raise ValueError(f"Unsupported architecture selected: {arch}")
+
+            # 4. Load weights into model
             model.load_state_dict(new_state_dict, strict=True)
             model.eval()
 
@@ -283,11 +306,15 @@ class ONNXConverterApp(ctk.CTk):
 
             # 4. Export
             output_onnx = os.path.splitext(model_path)[0] + ".onnx"
+            temp_onnx = output_onnx + ".temp"
             
+            self.status_label.configure(text="EXPORTING TO ONNX...", text_color="#fbbf24")
+            self.update()
+
             torch.onnx.export(
                 model,
                 dummy_input,
-                output_onnx,
+                temp_onnx,
                 export_params=True,
                 opset_version=18,
                 do_constant_folding=True,
@@ -298,6 +325,28 @@ class ONNXConverterApp(ctk.CTk):
                     'output': {2: 'height', 3: 'width'}
                 }
             )
+
+            # 5. Merge weights into a single ONNX file (avoid .onnx.data)
+            self.status_label.configure(text="MERGING WEIGHTS INTO SINGLE FILE...", text_color="#fbbf24")
+            self.update()
+
+            try:
+                onnx_model = onnx.load(temp_onnx, load_external_data=True)
+                onnx.save_model(onnx_model, output_onnx, save_as_external_data=False)
+                
+                # Cleanup temp and data files
+                if os.path.exists(temp_onnx):
+                    os.remove(temp_onnx)
+                data_file = temp_onnx + ".data"
+                if os.path.exists(data_file):
+                    os.remove(data_file)
+            except Exception as e:
+                # If merging fails (e.g. > 2GB limit), fallback to the original export
+                if os.path.exists(temp_onnx):
+                    if os.path.exists(output_onnx):
+                        os.remove(output_onnx)
+                    os.rename(temp_onnx, output_onnx)
+                print(f"Merge failed or skipped: {e}")
 
             self.status_label.configure(text=f"SUCCESS: {os.path.basename(output_onnx)}", text_color="#34d399")
             messagebox.showinfo("Export Successful", f"Model converted successfully!\n\nTarget: {output_onnx}")

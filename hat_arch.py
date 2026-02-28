@@ -6,7 +6,6 @@ import torch.utils.checkpoint as checkpoint
 from basicsr.utils.registry import ARCH_REGISTRY
 from basicsr.archs.arch_util import to_2tuple, trunc_normal_
 
-from einops import rearrange
 
 def drop_path(x, drop_prob: float = 0., training: bool = False):
     """Drop paths (Stochastic Depth) per sample (when applied in main path of residual blocks).
@@ -243,7 +242,8 @@ class OCAB(nn.Module):
         q_windows = window_partition(q, self.window_size)
         q_windows = q_windows.view(-1, self.window_size * self.window_size, c)
         kv_windows = self.unfold(kv)
-        kv_windows = rearrange(kv_windows, 'b (nc ch owh oww) nw -> nc (b nw) (owh oww) ch', nc=2, ch=c, owh=self.overlap_win_size, oww=self.overlap_win_size).contiguous()
+        kv_windows = kv_windows.view(b, 2, c, self.overlap_win_size, self.overlap_win_size, -1)
+        kv_windows = kv_windows.permute(1, 0, 5, 3, 4, 2).contiguous().view(2, -1, self.overlap_win_size * self.overlap_win_size, c)
         k_windows, v_windows = kv_windows[0], kv_windows[1]
         b_, nq, _ = q_windows.shape
         _, n, _ = k_windows.shape
@@ -378,9 +378,9 @@ class HAT(nn.Module):
         self.img_range = img_range
         if in_chans == 3:
             rgb_mean = (0.4488, 0.4371, 0.4040)
-            self.mean = torch.Tensor(rgb_mean).view(1, 3, 1, 1)
+            self.register_buffer('mean', torch.Tensor(rgb_mean).view(1, 3, 1, 1), persistent=False)
         else:
-            self.mean = torch.zeros(1, 1, 1, 1)
+            self.register_buffer('mean', torch.zeros(1, 1, 1, 1), persistent=False)
         self.upscale = upscale
         self.upsampler = upsampler
         relative_position_index_SA = self.calculate_rpi_sa()
@@ -491,7 +491,6 @@ class HAT(nn.Module):
         return x
 
     def forward(self, x):
-        self.mean = self.mean.type_as(x)
         x = (x - self.mean) * self.img_range
         if self.upsampler == 'pixelshuffle':
             x = self.conv_first(x)

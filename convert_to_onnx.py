@@ -1,6 +1,7 @@
 import os
 import torch
 import torch.onnx
+import onnx
 from basicsr.archs.swinir_arch import SwinIR
 from basicsr.archs.rrdbnet_arch import RRDBNet
 from safetensors.torch import load_file as load_safetensors
@@ -37,12 +38,14 @@ def convert(model_path, arch_type, scale=4, output_path=None):
     if output_path is None:
         output_path = os.path.splitext(model_path)[0] + ".onnx"
     
+    temp_path = output_path + ".temp"
     dummy_input = torch.randn(1, 3, 64, 64)
     
+    print(f"Exporting to {temp_path}...")
     torch.onnx.export(
         model, 
         dummy_input, 
-        output_path, 
+        temp_path, 
         export_params=True,
         opset_version=18,
         do_constant_folding=True,
@@ -51,6 +54,25 @@ def convert(model_path, arch_type, scale=4, output_path=None):
         dynamic_axes={'input': {2: 'height', 3: 'width'},
                       'output': {2: 'height', 3: 'width'}}
     )
+
+    print("Merging weights into a single file...")
+    try:
+        onnx_model = onnx.load(temp_path, load_external_data=True)
+        onnx.save_model(onnx_model, output_path, save_as_external_data=False)
+        
+        # Cleanup
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
+        data_file = temp_path + ".data"
+        if os.path.exists(data_file):
+            os.remove(data_file)
+    except Exception as e:
+        if os.path.exists(temp_path):
+            if os.path.exists(output_path):
+                os.remove(output_path)
+            os.rename(temp_path, output_path)
+        print(f"Merging failed, kept original: {e}")
+
     print(f"Successfully converted to {output_path}")
 
 if __name__ == "__main__":
