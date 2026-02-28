@@ -37,6 +37,14 @@ except ImportError:
     CUGAN_AVAILABLE = False
     RealCUGAN = None
 
+# Import ONNX Simplifier
+try:
+    from onnxsim import simplify
+    ONNXSIM_AVAILABLE = True
+except ImportError:
+    ONNXSIM_AVAILABLE = False
+    simplify = None
+
 # Set appearance mode and color theme
 ctk.set_appearance_mode("Dark")
 ctk.set_default_color_theme("blue")
@@ -125,8 +133,8 @@ class ONNXConverterApp(ctk.CTk):
         self.input_size_label = ctk.CTkLabel(self.opt_frame, text="Dummy Input Size (H, W):")
         self.input_size_label.pack(side="left", padx=15, pady=15)
         
-        self.input_size_entry = ctk.CTkEntry(self.opt_frame, placeholder_text="64, 64", width=80)
-        self.input_size_entry.insert(0, "64,64")
+        self.input_size_entry = ctk.CTkEntry(self.opt_frame, placeholder_text="256, 256", width=80)
+        self.input_size_entry.insert(0, "256,256")
         self.input_size_entry.pack(side="left", padx=5)
 
         self.win_label = ctk.CTkLabel(self.opt_frame, text="Window Size:")
@@ -297,12 +305,14 @@ class ONNXConverterApp(ctk.CTk):
             if model is None:
                 raise ValueError(f"Unsupported architecture selected: {arch}")
 
-            # 4. Load weights into model
+            # 4. Move to GPU if available and load weights
+            device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+            model = model.to(device)
             model.load_state_dict(new_state_dict, strict=True)
             model.eval()
 
             # 3. Create dummy input
-            dummy_input = torch.randn(1, 3, h, w)
+            dummy_input = torch.randn(1, 3, h, w).to(device)
 
             # 4. Export
             output_onnx = os.path.splitext(model_path)[0] + ".onnx"
@@ -326,7 +336,25 @@ class ONNXConverterApp(ctk.CTk):
                 }
             )
 
-            # 5. Merge weights into a single ONNX file (avoid .onnx.data)
+            # 5. Simplify with ONNX Simplifier (DirectML Fix)
+            if ONNXSIM_AVAILABLE:
+                self.status_label.configure(text="SIMPLIFYING ONNX MODEL...", text_color="#fbbf24")
+                self.update()
+                
+                try:
+                    onnx_model = onnx.load(temp_onnx)
+                    model_simp, check = simplify(onnx_model)
+                    if check:
+                        onnx.save(model_simp, temp_onnx)
+                        print("ONNX Simplification successful!")
+                    else:
+                        print("ONNX Simplification check failed, using raw export.")
+                except Exception as sim_e:
+                    print(f"ONNX Simplifier error: {sim_e}")
+            else:
+                print("ONNX Simplifier not found, skipping simplification...")
+
+            # 6. Merge weights into a single ONNX file (avoid .onnx.data)
             self.status_label.configure(text="MERGING WEIGHTS INTO SINGLE FILE...", text_color="#fbbf24")
             self.update()
 
