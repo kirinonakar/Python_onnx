@@ -102,10 +102,13 @@ class SafetensorsConverterGUI(ctk.CTk):
         self.input_label = ctk.CTkLabel(self.main_container, text="Input Model (.pth)", font=("Arial", 14, "bold"))
         self.input_label.pack(anchor="w", pady=(10, 5))
         
+        self.input_path_var = ctk.StringVar()
+        self.input_path_var.trace_add("write", self.on_input_change)
+        
         self.input_frame = ctk.CTkFrame(self.main_container, fg_color="#374151")
         self.input_frame.pack(fill="x", pady=5)
 
-        self.input_path_entry = ctk.CTkEntry(self.input_frame, placeholder_text="Path to .pth file...", border_width=0, height=35)
+        self.input_path_entry = ctk.CTkEntry(self.input_frame, textvariable=self.input_path_var, placeholder_text="Path to .pth file...", border_width=0, height=35)
         self.input_path_entry.pack(side="left", padx=10, pady=10, expand=True, fill="x")
 
         self.browse_input_btn = ctk.CTkButton(self.input_frame, text="Browse", command=self.browse_input, width=100, fg_color="#3b82f6", hover_color="#2563eb")
@@ -115,10 +118,12 @@ class SafetensorsConverterGUI(ctk.CTk):
         self.output_label = ctk.CTkLabel(self.main_container, text="Output Path (Optional)", font=("Arial", 14, "bold"))
         self.output_label.pack(anchor="w", pady=(10, 5))
         
+        self.output_path_var = ctk.StringVar()
+        
         self.output_frame = ctk.CTkFrame(self.main_container, fg_color="#374151")
         self.output_frame.pack(fill="x", pady=5)
 
-        self.output_path_entry = ctk.CTkEntry(self.output_frame, placeholder_text="Defaults to input filename...", border_width=0, height=35)
+        self.output_path_entry = ctk.CTkEntry(self.output_frame, textvariable=self.output_path_var, placeholder_text="Defaults to input filename...", border_width=0, height=35)
         self.output_path_entry.pack(side="left", padx=10, pady=10, expand=True, fill="x")
 
         self.browse_output_btn = ctk.CTkButton(self.output_frame, text="Save As", command=self.browse_output, width=100, fg_color="#374151", hover_color="#4b5563")
@@ -135,22 +140,28 @@ class SafetensorsConverterGUI(ctk.CTk):
         self.status_label = ctk.CTkLabel(self.status_footer, text="Ready", text_color="#9ca3af", font=("Arial", 12))
         self.status_label.pack(pady=5)
 
+    def on_input_change(self, *args):
+        input_path = self.input_path_var.get()
+        if input_path:
+            # If the input path points to a file, suggest a .safetensors output
+            # We use splitext to replace the extension
+            base, ext = os.path.splitext(input_path)
+            # Only update if the extension is something we expect or if it's changing
+            if ext.lower() in [".pth", ".pt", ".checkpoint", ".ckpt"]:
+                self.output_path_var.set(base + ".safetensors")
+            elif not ext:
+                # If no extension, just add .safetensors (maybe user is typing)
+                self.output_path_var.set(input_path + ".safetensors")
+
     def browse_input(self):
-        file_path = filedialog.askopenfilename(filetypes=[("PyTorch Weight", "*.pth")])
+        file_path = filedialog.askopenfilename(filetypes=[("PyTorch Weight", "*.pth;*.pt;*.ckpt")])
         if file_path:
-            self.input_path_entry.delete(0, "end")
-            self.input_path_entry.insert(0, file_path)
-            
-            # Auto-fill output if empty
-            if not self.output_path_entry.get():
-                out_path = os.path.splitext(file_path)[0] + ".safetensors"
-                self.output_path_entry.insert(0, out_path)
+            self.input_path_var.set(file_path)
 
     def browse_output(self):
         file_path = filedialog.asksaveasfilename(defaultextension=".safetensors", filetypes=[("Safetensors", "*.safetensors")])
         if file_path:
-            self.output_path_entry.delete(0, "end")
-            self.output_path_entry.insert(0, file_path)
+            self.output_path_var.set(file_path)
 
     def update_status(self, text, color_theme="blue"):
         colors = {
@@ -164,8 +175,8 @@ class SafetensorsConverterGUI(ctk.CTk):
         self.update()
 
     def start_conversion(self):
-        input_path = self.input_path_entry.get().strip()
-        output_path = self.output_path_entry.get().strip() or None
+        input_path = self.input_path_var.get().strip()
+        output_path = self.output_path_var.get().strip() or None
 
         if not input_path:
             messagebox.showerror("Error", "Please select an input .pth file.")
