@@ -1,14 +1,12 @@
 # 🎨 AI Upscale Model ONNX Converter
 
-A professional suite of tools for converting and optimizing PyTorch image upscaling models (Real-ESRGAN, SwinIR, Real-HAT-GAN, Real-CUGAN) to ONNX format.
+A professional suite of tools for converting and optimizing PyTorch image upscaling models to ONNX format.
 
 ## ✨ Main Features
 
 - **One-Click Conversion**: Convert `.pth` or `.safetensors` models to ONNX via a modern GUI.
-- **Auto-Detection**: Intelligent window size detection for HAT and SwinIR models.
 - **Weight Merging**: Merge external weights into a single `.onnx` file for easier deployment.
 - **Optimization**: Built-in support for ONNX Simplifier and Opset version selection.
-- **Multiple Architectures**: Supports HAT, SwinIR, Real-ESRGAN, and Real-CUGAN.
 
 ## 🚀 Usage
 
@@ -32,16 +30,8 @@ This is the **primary tool** recommended for most users. It provides the most fe
 - **`check_sd.py`**: A diagnostic tool to inspect the internal structure (State Dict) of model files to verify layers and weights.
 
 ### 📐 Architecture Definitions
-These files provide the model logic required during the conversion process:
-- **`hat_arch.py`**: Hybrid Attention Transformer (HAT) architecture. Modified to prevent `Loop` operator errors in ONNX.
-- **`cugan_arch.py`**: Real-CUGAN architecture definition.
+real-esrgan is working well. others are work in progress.
 
----
-
-## 💡 Troubleshooting Tips
-
-### HAT Model Conversion Errors
-- HAT model conversion errors are due to the fact that the HAT model is not compatible with the latest version of ONNX. 
 ---
 
 ## 📦 Installation
