@@ -155,7 +155,7 @@ class SafeToONNXConverter(ctk.CTk):
         self.size_label = ctk.CTkLabel(self.export_frame, text="더미 입력 크기 (H,W):", font=("Segoe UI", 12))
         self.size_label.grid(row=0, column=0, padx=15, pady=10, sticky="w")
         self.size_entry = ctk.CTkEntry(self.export_frame, width=100, fg_color="#1e293b")
-        self.size_entry.insert(0, "256,256")
+        self.size_entry.insert(0, "512,512")
         self.size_entry.grid(row=0, column=1, padx=5, pady=10, sticky="w")
 
         # Window Size
@@ -306,10 +306,17 @@ class SafeToONNXConverter(ctk.CTk):
             detected_win = None
             for k, v in state_dict.items():
                 name = k[7:] if k.startswith('module.') else k
+                
+                # attn_mask는 해상도(Dummy Input)에 따라 크기가 달라지며, 
+                # 모델 초기화 시 자동 생성되므로 체크포인트의 데이터는 무시합니다.
+                if 'attn_mask' in name:
+                    continue
+                    
                 new_state_dict[name] = v
                 
-                if not detected_win and 'relative_position_bias_table' in k and 'overlap_attn' not in k:
+                if not detected_win and 'relative_position_bias_table' in name and 'overlap_attn' not in name:
                     try:
+                        # shape: [ (2*w-1)^2, heads ]
                         size = int(v.shape[0]**0.5)
                         detected_win = (size + 1) // 2
                     except: pass
@@ -321,11 +328,33 @@ class SafeToONNXConverter(ctk.CTk):
                 self.update_status(f"윈도우 크기 감지됨: {window_size}", "#fbbf24")
 
             # 2. 모델 초기화
-            model = self.get_model(arch, scale, window_size, h)
+            model = self.get_model(arch, scale, window_size, (h, w))
             if model is None: raise ValueError("지원하지 않는 아키텍처입니다.")
             
             device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-            model.load_state_dict(new_state_dict, strict=True)
+            
+            # SwinIR/HAT 등 트랜스포머 아키텍처는 해상도(Dummy Input)에 따라 attn_mask 크기가 달라짐
+            # 체크포인트의 mask와 현재 모델의 mask 크기가 다를 경우를 위해 strict=False 사용
+            is_transformer = "SwinIR" in arch or "HAT" in arch
+            if is_transformer:
+                self.update_status("트랜스포머 로드 중 (attn_mask 무시)...", "#fbbf24")
+                model.load_state_dict(new_state_dict, strict=False)
+                
+                # PyTorch 2.5+ 'c_mean' 버그 패치: 
+                # 버퍼(Buffer)를 파라미터(Parameter)로 전환하여 익스포터의 내부 이름 매핑 오류를 회피합니다.
+                def patch_model_buffers(m):
+                    if hasattr(m, 'c_mean'):
+                        try:
+                            val = m.c_mean.detach().clone()
+                            if 'c_mean' in m._buffers:
+                                del m._buffers['c_mean']
+                            # 파라미터로 설정하면 익스포터가 이를 상수가 아닌 가중치로 인식하여 충돌을 피합니다.
+                            m.c_mean = torch.nn.Parameter(val, requires_grad=False)
+                        except: pass
+                model.apply(patch_model_buffers)
+            else:
+                model.load_state_dict(new_state_dict, strict=True)
+            
             model.to(device).eval()
 
             # 3. ONNX Export
@@ -334,16 +363,54 @@ class SafeToONNXConverter(ctk.CTk):
             dummy_input = torch.randn(1, 3, h, w).to(device)
 
             self.update_status("ONNX 내보내기 중...", "#fbbf24")
-            torch.onnx.export(
-                model, dummy_input, temp_onnx,
-                export_params=True, opset_version=opset,
-                do_constant_folding=True,
-                input_names=['input'], output_names=['output'],
-                dynamic_axes={
-                    'input': {0: 'batch', 2: 'in_height', 3: 'in_width'},
-                    'output': {0: 'batch', 2: 'out_height', 3: 'out_width'}
-                }
-            )
+            
+            # 다이나믹 축 설정
+            d_axes = {'input': {0: 'batch'}, 'output': {0: 'batch'}}
+            if not is_transformer:
+                d_axes['input'].update({2: 'in_height', 3: 'in_width'})
+                d_axes['output'].update({2: 'out_height', 3: 'out_width'})
+
+            try:
+                # 1차 시도: JIT Tracing + Wrapper (서명 및 명칭 에러 방지)
+                export_model = model
+                if is_transformer:
+                    self.update_status("모델 트레이싱 중...", "#fbbf24")
+                    with torch.no_grad():
+                        with warnings.catch_warnings():
+                            warnings.filterwarnings("ignore", category=torch.jit.TracerWarning)
+                            traced = torch.jit.trace(model, dummy_input, check_trace=False)
+                            
+                            # ScriptModule의 서명 오류(pybind11 signature) 방지를 위한 래퍼 클래스
+                            class OnnxWrapper(torch.nn.Module):
+                                def __init__(self, m):
+                                    super().__init__()
+                                    self.m = m
+                                def forward(self, x):
+                                    return self.m(x)
+                            export_model = OnnxWrapper(traced)
+
+                torch.onnx.export(
+                    export_model, dummy_input, temp_onnx,
+                    export_params=True, opset_version=opset,
+                    do_constant_folding=True,
+                    input_names=['input'], output_names=['output'],
+                    dynamic_axes=d_axes
+                )
+            except Exception as export_err:
+                # 2차 시도: 고정 해상도 및 비-JIT 경로 (최종 폴백)
+                err_str = str(export_err)
+                if any(x in err_str for x in ["c_mean", "signature", "dynamic_shapes", "inferred a static shape"]):
+                    self.update_status("최종 호환 모드(Fallback) 시도 중...", "#fbbf24")
+                    # 가장 원시적인 형태로 내보내기
+                    torch.onnx.export(
+                        model, dummy_input, temp_onnx,
+                        export_params=True, opset_version=opset,
+                        do_constant_folding=True,
+                        input_names=['input'], output_names=['output'],
+                        dynamic_axes={'input': {0: 'batch'}, 'output': {0: 'batch'}}
+                    )
+                else:
+                    raise export_err
 
             # 4. Simplification
             if self.sim_var.get() and ONNXSIM_AVAILABLE:
@@ -383,6 +450,8 @@ class SafeToONNXConverter(ctk.CTk):
                 error_msg += "\n\n💡 힌트: Opset 17에서 Resize 연산자 변환 오류가 감지되었습니다. Opset Version을 16 또는 18로 변경하여 다시 시도해보세요."
             elif "topologically sorted" in error_msg or "OpType: Loop" in error_msg:
                 error_msg += "\n\n💡 힌트: HAT 모델의 복잡한 구조로 인해 최적화(Simplify) 중 순서 정렬 오류가 발생했습니다.\n\n✅ 해결 방법: Opset Version을 [16]으로 설정하고 다시 시도해보세요. (11이 안 될 경우 16이 가장 안정적입니다.)"
+            elif "inferred a static shape" in error_msg or "torch.export" in error_msg:
+                error_msg += "\n\n💡 힌트: PyTorch 2.5+의 새로운 익스포터가 모델의 특정 연산을 고정 크기로 감지했습니다.\n\n✅ 해결 방법: SwinIR/HAT 같은 트랜스포머 모델은 고정 해상도로 변환하는 것이 가장 안전합니다. [더미 입력 크기]를 실제 사용할 타일 크기로 정확히 설정하세요."
             elif "No Adapter" in error_msg and "ScatterND" in error_msg:
                 error_msg += "\n\n💡 힌트: 최신 PyTorch 익스포터가 낮은 버전(11)으로 변환하지 못하고 있습니다.\n\n✅ 해결 방법: Opset Version을 [16]으로 설정하고 다시 시도해보세요. 16은 최신 기능과 호환성을 모두 갖춘 버전입니다."
             elif "Resize" in error_msg and "opset" in error_msg:
