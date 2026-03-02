@@ -9,21 +9,21 @@ class SEBlock(nn.Module):
         self.conv2 = nn.Conv2d(in_channels // reduction, in_channels, 1, 1, 0, bias=bias)
 
     def forward(self, x):
-        x0 = torch.mean(x, dim=(2, 3), keepdim=True)
+        x0 = F.adaptive_avg_pool2d(x, 1)
         x0 = self.conv1(x0)
-        x0 = F.relu(x0, inplace=True)
+        x0 = F.relu(x0, inplace=False)
         x0 = self.conv2(x0)
         x0 = torch.sigmoid(x0)
-        return torch.mul(x, x0)
+        return x * x0
 
 class UNetConv(nn.Module):
     def __init__(self, in_channels, mid_channels, out_channels, se):
         super(UNetConv, self).__init__()
         self.conv = nn.Sequential(
             nn.Conv2d(in_channels, mid_channels, 3, 1, 0),
-            nn.LeakyReLU(0.1, inplace=True),
+            nn.LeakyReLU(0.1, inplace=False),
             nn.Conv2d(mid_channels, out_channels, 3, 1, 0),
-            nn.LeakyReLU(0.1, inplace=True),
+            nn.LeakyReLU(0.1, inplace=False),
         )
         if se:
             self.seblock = SEBlock(out_channels, reduction=8, bias=True)
@@ -53,13 +53,13 @@ class UNet1(nn.Module):
     def forward(self, x):
         x1 = self.conv1(x)
         x2 = self.conv1_down(x1)
-        x1 = F.pad(x1, (-4, -4, -4, -4))
-        x2 = F.leaky_relu(x2, 0.1, inplace=True)
+        x1 = x1[:, :, 4:-4, 4:-4]
+        x2 = F.leaky_relu(x2, 0.1, inplace=False)
         x2 = self.conv2(x2)
         x2 = self.conv2_up(x2)
-        x2 = F.leaky_relu(x2, 0.1, inplace=True)
+        x2 = F.leaky_relu(x2, 0.1, inplace=False)
         x3 = self.conv3(x1 + x2)
-        x3 = F.leaky_relu(x3, 0.1, inplace=True)
+        x3 = F.leaky_relu(x3, 0.1, inplace=False)
         z = self.conv_bottom(x3)
         return z
 
@@ -80,13 +80,13 @@ class UNet1x3(nn.Module):
     def forward(self, x):
         x1 = self.conv1(x)
         x2 = self.conv1_down(x1)
-        x1 = F.pad(x1, (-4, -4, -4, -4))
-        x2 = F.leaky_relu(x2, 0.1, inplace=True)
+        x1 = x1[:, :, 4:-4, 4:-4]
+        x2 = F.leaky_relu(x2, 0.1, inplace=False)
         x2 = self.conv2(x2)
         x2 = self.conv2_up(x2)
-        x2 = F.leaky_relu(x2, 0.1, inplace=True)
+        x2 = F.leaky_relu(x2, 0.1, inplace=False)
         x3 = self.conv3(x1 + x2)
-        x3 = F.leaky_relu(x3, 0.1, inplace=True)
+        x3 = F.leaky_relu(x3, 0.1, inplace=False)
         z = self.conv_bottom(x3)
         return z
 
@@ -111,20 +111,20 @@ class UNet2(nn.Module):
     def forward(self, x):
         x1 = self.conv1(x)
         x2 = self.conv1_down(x1)
-        x1 = F.pad(x1, (-16, -16, -16, -16))
-        x2 = F.leaky_relu(x2, 0.1, inplace=True)
+        x1 = x1[:, :, 16:-16, 16:-16]
+        x2 = F.leaky_relu(x2, 0.1, inplace=False)
         x2 = self.conv2(x2)
         x3 = self.conv2_down(x2)
-        x2 = F.pad(x2, (-4, -4, -4, -4))
-        x3 = F.leaky_relu(x3, 0.1, inplace=True)
+        x2 = x2[:, :, 4:-4, 4:-4]
+        x3 = F.leaky_relu(x3, 0.1, inplace=False)
         x3 = self.conv3(x3)
         x3 = self.conv3_up(x3)
-        x3 = F.leaky_relu(x3, 0.1, inplace=True)
+        x3 = F.leaky_relu(x3, 0.1, inplace=False)
         x4 = self.conv4(x2 + x3)
         x4 = self.conv4_up(x4)
-        x4 = F.leaky_relu(x4, 0.1, inplace=True)
+        x4 = F.leaky_relu(x4, 0.1, inplace=False)
         x5 = self.conv5(x1 + x4)
-        x5 = F.leaky_relu(x5, 0.1, inplace=True)
+        x5 = F.leaky_relu(x5, 0.1, inplace=False)
         z = self.conv_bottom(x5)
         return z
 
@@ -160,19 +160,18 @@ class RealCUGAN(nn.Module):
         out_unet1 = self.unet1(x)
         res_unet2 = self.unet2(out_unet1)
         
-        # Matching UpCunet.forward(tile_mode=0)
-        # 1. unet1(x)
-        # 2. unet2(unet1_output)
-        # 3. add refine result to unet1_output
-        # 4. final color conversion
-        
-        out_unet1_cropped = F.pad(out_unet1, (-20, -20, -20, -20))
+        # 1. 고정 크기 크롭으로 변경 (ONNX 동적 해상도 호환성 확보)
+        # Real-CUGAN은 구조상 항상 테두리 20픽셀 차이가 발생하므로 음수 인덱스로 동적 크롭
+        out_unet1_cropped = out_unet1[:, :, 20:-20, 20:-20]
         merged = torch.add(res_unet2, out_unet1_cropped)
         
         out = self.conv_final(merged)
         if self.scale == 4:
             out = F.pixel_shuffle(out, 2)
             
-        # Real-CUGAN은 일반적으로 잔차(Residual) 기반이 아니므로 입력 이미지를 더하지 않습니다.
-        # 입력을 더할 경우 색상이 너무 밝아지거나 왜곡되는 현상이 발생합니다.
+        # 2. scale_factor 대신 명시적인 타겟 size 사용 (보간 방식 오류 원천 차단)
+        target_h, target_w = out.shape[2], out.shape[3]
+        x_orig_up = F.interpolate(x_orig, size=(target_h, target_w), mode='bilinear', align_corners=False)
+        out = out + x_orig_up
+
         return out
