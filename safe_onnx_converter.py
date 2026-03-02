@@ -54,7 +54,7 @@ class SafeToONNXConverter(ctk.CTk):
         super().__init__()
 
         self.title("Safetensors to ONNX Converter Pro")
-        self.geometry("750x700")
+        self.geometry("750x800")
         self.grid_columnconfigure(0, weight=1)
 
         # 헤더 섹션
@@ -78,7 +78,7 @@ class SafeToONNXConverter(ctk.CTk):
         self.subtitle_label.pack(pady=(0, 15))
 
         # 메인 컨테이너
-        self.content_frame = ctk.CTkScrollableFrame(self, fg_color="transparent")
+        self.content_frame = ctk.CTkFrame(self, fg_color="transparent")
         self.content_frame.pack(fill="both", expand=True, padx=20, pady=10)
 
         # 1. 파일 선택 섹션
@@ -170,13 +170,13 @@ class SafeToONNXConverter(ctk.CTk):
         # Opset Version
         self.opset_label = ctk.CTkLabel(self.export_frame, text="Opset Version:", font=("Segoe UI", 12))
         self.opset_label.grid(row=2, column=0, padx=15, pady=10, sticky="w")
-        self.opset_var = ctk.StringVar(value="17")
-        self.opset_menu = ctk.CTkOptionMenu(self.export_frame, values=["14", "15", "16", "17", "18"], variable=self.opset_var, width=80, fg_color="#1e293b")
+        self.opset_var = ctk.StringVar(value="18")
+        self.opset_menu = ctk.CTkOptionMenu(self.export_frame, values=["11", "13", "14", "15", "16", "17", "18"], variable=self.opset_var, width=80, fg_color="#1e293b")
         self.opset_menu.grid(row=2, column=1, padx=5, pady=10, sticky="w")
 
         # Simplification Switch
         self.sim_var = ctk.BooleanVar(value=True)
-        self.sim_switch = ctk.CTkSwitch(self.export_frame, text="ONNX Simplifier 사용", variable=self.sim_var, progress_color="#3b82f6")
+        self.sim_switch = ctk.CTkSwitch(self.export_frame, text="ONNX Simplifier 사용", variable=self.sim_var, progress_color="#10b981")
         self.sim_switch.grid(row=0, column=3, padx=30, pady=10, sticky="w")
 
         # Merge Weights Switch
@@ -197,11 +197,11 @@ class SafeToONNXConverter(ctk.CTk):
         self.convert_btn.pack(pady=20, padx=40, fill="x")
 
         # 상태 표시바
-        self.status_bar = ctk.CTkFrame(self, height=40, fg_color="#0f172a", corner_radius=0)
+        self.status_bar = ctk.CTkFrame(self, fg_color="#0f172a", corner_radius=0)
         self.status_bar.pack(side="bottom", fill="x")
         
         self.status_label = ctk.CTkLabel(self.status_bar, text="준비됨", text_color="#94a3b8", font=("Segoe UI", 11))
-        self.status_label.pack(pady=5)
+        self.status_label.pack(pady=15)
 
     def create_section_label(self, parent, text):
         label = ctk.CTkLabel(parent, text=text, font=("Segoe UI", 15, "bold"), text_color="#60a5fa")
@@ -374,7 +374,14 @@ class SafeToONNXConverter(ctk.CTk):
         except Exception as e:
             traceback.print_exc()
             self.update_status("오류 발생", "#f87171")
-            messagebox.showerror("변환 오류", f"에러 발생:\n{str(e)}")
+            
+            error_msg = str(e)
+            if "No Adapter To Version $17 for Resize" in error_msg:
+                error_msg += "\n\n💡 힌트: Opset 17에서 Resize 연산자 변환 오류가 감지되었습니다. Opset Version을 16 또는 18로 변경하여 다시 시도해보세요."
+            elif "Resize" in error_msg and "opset" in error_msg:
+                error_msg += "\n\n💡 힌트: Resize 연산자 관련 Opset 호환성 문제입니다. 다른 Opset 버전을 시도해보세요."
+                
+            messagebox.showerror("변환 오류", f"에러 발생:\n{error_msg}")
         
         finally:
             self.convert_btn.configure(state="normal", text="🚀 ONNX 변환 시작")
