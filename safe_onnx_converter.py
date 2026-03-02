@@ -175,7 +175,7 @@ class SafeToONNXConverter(ctk.CTk):
         self.opset_menu.grid(row=2, column=1, padx=5, pady=10, sticky="w")
 
         # Simplification Switch
-        self.sim_var = ctk.BooleanVar(value=True)
+        self.sim_var = ctk.BooleanVar(value=False)
         self.sim_switch = ctk.CTkSwitch(self.export_frame, text="ONNX Simplifier 사용", variable=self.sim_var, progress_color="#10b981")
         self.sim_switch.grid(row=0, column=3, padx=30, pady=10, sticky="w")
 

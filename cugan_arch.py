@@ -169,9 +169,9 @@ class RealCUGAN(nn.Module):
         if self.scale == 4:
             out = F.pixel_shuffle(out, 2)
             
-        # 2. scale_factor 대신 명시적인 타겟 size 사용 (보간 방식 오류 원천 차단)
-        target_h, target_w = out.shape[2], out.shape[3]
-        x_orig_up = F.interpolate(x_orig, size=(target_h, target_w), mode='bilinear', align_corners=False)
+        # [수정된 부분] size 대신 float 타입의 scale_factor를 사용하고, 
+        # recompute_scale_factor=False를 주어 ONNX가 강제로 Nearest로 바꾸는 것을 원천 차단합니다.
+        x_orig_up = F.interpolate(x_orig, scale_factor=float(self.scale), mode='bilinear', align_corners=False, recompute_scale_factor=False)
         out = out + x_orig_up
 
         return out
