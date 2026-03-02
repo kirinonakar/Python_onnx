@@ -173,5 +173,6 @@ class RealCUGAN(nn.Module):
         if self.scale == 4:
             out = F.pixel_shuffle(out, 2)
             
-        # Global Skip Connection (Critical for preventing black images)
-        return out + F.interpolate(x_orig, scale_factor=self.scale, mode='nearest')
+        # Real-CUGAN은 일반적으로 잔차(Residual) 기반이 아니므로 입력 이미지를 더하지 않습니다.
+        # 입력을 더할 경우 색상이 너무 밝아지거나 왜곡되는 현상이 발생합니다.
+        return out

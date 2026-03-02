@@ -339,7 +339,10 @@ class SafeToONNXConverter(ctk.CTk):
                 export_params=True, opset_version=opset,
                 do_constant_folding=True,
                 input_names=['input'], output_names=['output'],
-                dynamic_axes={'input':{2:'height', 3:'width'}, 'output':{2:'height', 3:'width'}}
+                dynamic_axes={
+                    'input': {0: 'batch', 2: 'in_height', 3: 'in_width'},
+                    'output': {0: 'batch', 2: 'out_height', 3: 'out_width'}
+                }
             )
 
             # 4. Simplification
