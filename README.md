@@ -50,6 +50,6 @@ Real-ESRGAN is working well. Others are work in progress.
     pip install -r requirements.txt
     ```
 
-## 🤝 Contributing
+## 📜 License
 
-Feel free to fork the repository and submit pull requests for new architectures or optimizations!
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
