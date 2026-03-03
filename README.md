@@ -12,7 +12,13 @@ A professional suite of tools for converting and optimizing PyTorch image upscal
 
 ### Launch the Main Converter
 ```bash
+#activate .venv
+source .venv/Scripts/activate
+#convert pth or safetensors to onnx
 python safe_onnx_converter.py
+#convert pth to safetensors
+python convert_safetensors.py
+
 ```
 This is the **primary tool** recommended for most users. It provides the most features and the best compatibility.
 
@@ -30,7 +36,7 @@ This is the **primary tool** recommended for most users. It provides the most fe
 - **`check_sd.py`**: A diagnostic tool to inspect the internal structure (State Dict) of model files to verify layers and weights.
 
 ### 📐 Architecture Definitions
-real-esrgan is working well. others are work in progress.
+Real-ESRGAN is working well. Others are work in progress.
 
 ---
 
