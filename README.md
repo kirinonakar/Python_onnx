@@ -14,12 +14,18 @@ A professional suite of tools for converting and optimizing PyTorch image upscal
 ```bash
 #activate .venv
 source .venv/Scripts/activate
+
 #convert pth or safetensors to onnx
 python safe_onnx_converter.py
+
 #convert pth to safetensors
 python convert_safetensors.py
+
 #convert fp16 onnx to fp32 onnx
 python convert_fp32.py
+
+#convert fp32 onnx to mixed precision fp16 onnx
+python convert_mixed_fp16.py
 
 ```
 This is the **primary tool** recommended for most users. It provides the most features and the best compatibility.
