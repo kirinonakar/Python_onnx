@@ -18,6 +18,8 @@ source .venv/Scripts/activate
 python safe_onnx_converter.py
 #convert pth to safetensors
 python convert_safetensors.py
+#convert fp16 onnx to fp32 onnx
+python convert_fp32.py
 
 ```
 This is the **primary tool** recommended for most users. It provides the most features and the best compatibility.
