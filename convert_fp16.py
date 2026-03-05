@@ -11,12 +11,33 @@ import traceback
 ctk.set_appearance_mode("Dark")
 ctk.set_default_color_theme("blue")
 
-def convert_graph_precision_to_fp16(graph, status_callback=None):
+def find_protected_tensors(graph):
     """
-    재귀적으로 그래프와 서브그래프의 모든 요소를 FP16으로 변환
+    FP32를 유지해야 하는 텐서(Resize의 scales 등)의 이름을 수집
+    """
+    protected = set()
+    for node in graph.node:
+        # Resize 노드: roi(input[1])와 scales(input[2])는 반드시 FP32여야 함
+        if node.op_type in ['Resize', 'Upsample']:
+            if len(node.input) > 1 and node.input[1]:
+                protected.add(node.input[1])
+            if len(node.input) > 2 and node.input[2]:
+                protected.add(node.input[2])
+        
+        # 서브그래프(Loop, If 등) 재귀 탐색
+        for attr in node.attribute:
+            if attr.type == onnx.AttributeProto.GRAPH:
+                protected.update(find_protected_tensors(attr.g))
+    return protected
+
+def convert_graph_precision_to_fp16(graph, protected_tensors, status_callback=None):
+    """
+    재귀적으로 그래프와 서브그래프의 모든 요소를 FP16으로 변환 (보호 대상 제외)
     """
     # 1. 초기화된 가중치(Initializers) 변환
     for init in graph.initializer:
+        if init.name in protected_tensors:
+            continue
         if init.data_type == TensorProto.FLOAT:
             try:
                 np_arr = to_array(init).astype(np.float16)
@@ -27,56 +48,50 @@ def convert_graph_precision_to_fp16(graph, status_callback=None):
 
     # 2. 입출력 및 중간 텐서(Value_info) 타입 변환
     for value_info in list(graph.input) + list(graph.output) + list(graph.value_info):
+        if value_info.name in protected_tensors:
+            continue
         if value_info.type.tensor_type.elem_type == TensorProto.FLOAT:
             value_info.type.tensor_type.elem_type = TensorProto.FLOAT16
 
     # 3. 모든 노드 순회하며 속성(Attribute) 및 서브그래프 변환
     for node in graph.node:
-        # 노드의 모든 속성 검사 (Constant의 value, Cast의 to, ConstantOfShape의 value 등)
+        is_node_output_protected = any(out in protected_tensors for out in node.output)
+
         for attr in node.attribute:
-            # (1) 텐서 타입 속성 처리 (Constant, ConstantOfShape 등)
             if attr.type == onnx.AttributeProto.TENSOR:
-                if attr.t.data_type == TensorProto.FLOAT:
+                if not is_node_output_protected and attr.t.data_type == TensorProto.FLOAT:
                     try:
                         np_arr = to_array(attr.t).astype(np.float16)
                         attr.t.CopyFrom(from_array(np_arr))
                     except Exception as e:
                         print(f"Warning: Failed to convert attribute tensor in node {node.name}: {e}")
             
-            # (2) 데이터 타입 지정 속성 처리 (Cast, RandomNormal 등)
             elif attr.name in ['to', 'dtype'] and attr.i == TensorProto.FLOAT:
-                attr.i = TensorProto.FLOAT16
+                if not is_node_output_protected:
+                    attr.i = TensorProto.FLOAT16
             
-            # (3) 서브그래프 처리 (Loop, If, Scan 등)
             elif attr.type == onnx.AttributeProto.GRAPH:
-                convert_graph_precision_to_fp16(attr.g, status_callback)
+                convert_graph_precision_to_fp16(attr.g, protected_tensors, status_callback)
 
 def convert_fp32_to_fp16_logic(input_model_path, output_model_path, status_callback=None):
     if status_callback: status_callback(f"[{os.path.basename(input_model_path)}] 로딩 중...", "#60a5fa")
     
-    # 모델 로드
     model = onnx.load(input_model_path)
     
-    if status_callback: status_callback("전체 그래프 및 서브그래프 FP16 변환 중...", "#fbbf24")
+    if status_callback: status_callback("보호가 필요한 텐서 분석 중 (Resize 등)...", "#fbbf24")
+    protected_tensors = find_protected_tensors(model.graph)
     
-    # 메인 그래프부터 시작하여 재귀적으로 변환
-    convert_graph_precision_to_fp16(model.graph, status_callback)
+    if status_callback: status_callback(f"FP16 변환 시작 (보호 대상: {len(protected_tensors)}개)...", "#fbbf24")
+    convert_graph_precision_to_fp16(model.graph, protected_tensors, status_callback)
 
-    if status_callback: status_callback("저장 전 무결성 확인 중...", "#fbbf24")
-    
-    # 변환된 모델 저장
     if status_callback: status_callback("파일 저장 중...", "#34d399")
-    
-    # 모델의 ir_version에 따라 large model 지원이 필요할 수 있음
     try:
         onnx.save(model, output_model_path)
     except Exception as e:
         if "size" in str(e).lower():
-            if status_callback: status_callback("대용량 모델 저장 시도 중 (외부 데이터)...", "#fbbf24")
             onnx.save(model, output_model_path, save_as_external_data=True, all_tensors_to_one_file=True)
         else:
             raise e
-            
     return True
 
 class FP16ConverterApp(ctk.CTk):
