@@ -44,6 +44,7 @@ safetensors==0.7.0
 scikit-image==0.26.0
 scipy==1.17.1
 setuptools==70.2.0
+spandrel==0.4.2
 sympy==1.14.0
 tb-nightly==2.21.0a20251023
 tensorboard-data-server==0.7.2
