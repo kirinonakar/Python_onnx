@@ -38,13 +38,12 @@ This is the **primary tool** recommended for most users. It provides the most fe
 - **`safe_onnx_converter.py`**: **[Primary]** The most advanced GUI converter. Features include auto-detection of parameters, Opset selection (11-18), simplification, and weight merging.
 - **`convert_safetensors.py`**: A dedicated GUI for converting PyTorch `.pth` files to the newer `.safetensors` format.
 
-
 ### 🛠️ Optimization & Utilities
 - **`convert_int32.py`**: Converts ONNX models from Int64 to Int32. This is often required for environments like Rust (ort crate) or mobile deployment to avoid data type errors.
 - **`check_sd.py`**: A diagnostic tool to inspect the internal structure (State Dict) of model files to verify layers and weights.
 
 ### 📐 Architecture Definitions
-Real-ESRGAN is working well. Others are work in progress.
+Most architectures are supported using [Spandrel](https://github.com/chaiNNer-org/spandrel), allowing for automatic detection and configuration of model parameters.
 
 ---
 
