@@ -20,13 +20,6 @@ python safe_onnx_converter.py
 
 #convert pth to safetensors
 python convert_safetensors.py
-
-#convert fp16 onnx to fp32 onnx
-python convert_fp32.py
-
-#convert fp32 onnx to mixed precision fp16 onnx
-python convert_mixed_fp16.py
-
 ```
 This is the **primary tool** recommended for most users. It provides the most features and the best compatibility.
 
@@ -41,6 +34,8 @@ This is the **primary tool** recommended for most users. It provides the most fe
 ### 🛠️ Optimization & Utilities
 - **`convert_int32.py`**: Converts ONNX models from Int64 to Int32. This is often required for environments like Rust (ort crate) or mobile deployment to avoid data type errors.
 - **`check_sd.py`**: A diagnostic tool to inspect the internal structure (State Dict) of model files to verify layers and weights.
+- **`convert_fp32.py`**: convert fp16 onnx to fp32 onnx
+- **`convert_mixed_fp16.py`**: convert fp32 onnx to mixed precision fp16 onnx
 
 ### 📐 Architecture Definitions
 Most architectures are supported using [Spandrel](https://github.com/chaiNNer-org/spandrel), allowing for automatic detection and configuration of model parameters.

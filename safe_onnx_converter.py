@@ -11,32 +11,6 @@ from safetensors.torch import load_file as load_safetensors
 # Meshgrid 경고 무시
 warnings.filterwarnings("ignore", category=UserWarning)
 
-# 아키텍처 임포트
-try:
-    from basicsr.archs.swinir_arch import SwinIR
-    from basicsr.archs.rrdbnet_arch import RRDBNet
-    BASI_SR_AVAILABLE = True
-except ImportError:
-    BASI_SR_AVAILABLE = False
-    SwinIR = None
-    RRDBNet = None
-
-# HAT 아키텍처 임포트 (hat_arch.py 필요)
-try:
-    from hat_arch import HAT
-    HAT_AVAILABLE = True
-except ImportError:
-    HAT_AVAILABLE = False
-    HAT = None
-
-# Real-CUGAN 아키텍처 임포트 (cugan_arch.py 필요)
-try:
-    from cugan_arch import RealCUGAN
-    CUGAN_AVAILABLE = True
-except ImportError:
-    CUGAN_AVAILABLE = False
-    RealCUGAN = None
-
 # ONNX Simplifier 임포트
 try:
     from onnxsim import simplify
@@ -121,15 +95,12 @@ class SafeToONNXConverter(ctk.CTk):
         self.arch_var = ctk.StringVar(value="Auto-Detect (Spandrel)")
         self.arch_menu = ctk.CTkOptionMenu(
             self.settings_frame, 
-            values=[
-                "Auto-Detect (Spandrel)",
-                "Real-CUGAN", "SwinIR", "Swin2SR", "DAT", "HAT", "DRCT",
-                "Real-ESRGAN (23B)", "Real-ESRGAN Anime (6B)", "Real-ESRGAN Light (8B)"
-            ],
+            values=["Auto-Detect (Spandrel)"],
             variable=self.arch_var,
             width=250,
             fg_color="#1e293b",
-            button_color="#3b82f6"
+            button_color="#3b82f6",
+            state="disabled"
         )
         self.arch_menu.grid(row=1, column=0, padx=15, pady=(0, 15), sticky="w")
 
@@ -222,30 +193,6 @@ class SafeToONNXConverter(ctk.CTk):
         self.status_label.configure(text=text, text_color=color)
         self.update()
 
-    def get_model_fallback(self, arch, scale, window_size, img_size):
-        """Spandrel 실패 시 수동으로 기본 아키텍처 생성을 시도합니다."""
-        if "HAT" in arch:
-            if not HAT_AVAILABLE: return None
-            params = {
-                "img_size": img_size, "patch_size": 1, "in_chans": 3, "embed_dim": 180, 
-                "depths": (6,6,6,6,6,6), "num_heads": (6,6,6,6,6,6), "window_size": window_size,
-                "compress_ratio": 3, "squeeze_factor": 30, "conv_scale": 0.01, 
-                "overlap_ratio": 0.5, "mlp_ratio": 2., "upscale": scale, 
-                "upsampler": 'pixelshuffle', "resi_connection": '1conv'
-            }
-            return HAT(**params)
-        elif "SwinIR" in arch:
-            if not BASI_SR_AVAILABLE: return None
-            return SwinIR(upscale=scale, in_chans=3, img_size=img_size, window_size=window_size,
-                         img_range=1.0, depths=[6, 6, 6, 6, 6, 6], embed_dim=180, 
-                         num_heads=[6, 6, 6, 6, 6, 6], mlp_ratio=2, upsampler='pixelshuffle')
-        elif "Real-ESRGAN" in arch:
-            if not BASI_SR_AVAILABLE: return None
-            return RRDBNet(num_in_ch=3, num_out_ch=3, num_feat=64, num_block=23, num_grow_ch=32, scale=scale)
-        elif "Real-CUGAN" in arch:
-            if not CUGAN_AVAILABLE: return None
-            return RealCUGAN(in_channels=3, out_channels=3, scale=scale)
-        return None
 
     def start_conversion(self):
         model_path = self.path_entry.get().strip()
@@ -286,34 +233,8 @@ class SafeToONNXConverter(ctk.CTk):
                     self.scale_var.set(str(detected_scale))
                     scale = detected_scale
             except Exception as spandrel_err:
-                # Spandrel 실패 시 수동 로딩 (기존 로직)
-                self.update_status("Spandrel 자동 감지 실패, 수동 로드 시도...", "#f87171")
-                
-                # 가중치 로드
-                if model_path.endswith(".safetensors"):
-                    state_dict = load_safetensors(model_path, device="cpu")
-                else:
-                    state_dict = torch.load(model_path, map_location="cpu")
-                
-                # Key 추출
-                for k in ["params_ema", "params", "state_dict", "model"]:
-                    if k in state_dict:
-                        state_dict = state_dict[k]
-                        break
-                
-                # Module 프리픽스 제거
-                new_state_dict = { (k[7:] if k.startswith('module.') else k): v for k, v in state_dict.items() if 'attn_mask' not in k }
-                
-                # 모델 인스턴스화
-                try:
-                    window_size = int(self.win_entry.get())
-                except: window_size = 16
-                
-                model = self.get_model_fallback(arch_selection, scale, window_size, (h, w))
-                if model is None: raise spandrel_err
-                
-                model.load_state_dict(new_state_dict, strict=False)
-                arch_id = arch_selection
+                self.update_status("Spandrel 자동 감지 실패", "#f87171")
+                raise spandrel_err
 
             model.to(device).eval()
 
