@@ -148,8 +148,10 @@ class SafeToONNXConverter(ctk.CTk):
         self.opset_menu.grid(row=2, column=1, padx=5, pady=10, sticky="w")
 
         # Simplification Switch
-        self.sim_var = ctk.BooleanVar(value=True)
+        self.sim_var = ctk.BooleanVar(value=False)
         self.sim_switch = ctk.CTkSwitch(self.export_frame, text="ONNX Simplifier 사용", variable=self.sim_var, progress_color="#10b981")
+        if not ONNXSIM_AVAILABLE:
+            self.sim_switch.configure(state="disabled", text="ONNX Simplifier (미설치)")
         self.sim_switch.grid(row=0, column=3, padx=30, pady=10, sticky="w")
 
         # Merge Weights Switch
@@ -303,8 +305,8 @@ class SafeToONNXConverter(ctk.CTk):
                     }
                 )
 
-            # 4. Simplification & Dynamic Shape Injections (필수)
-            if ONNXSIM_AVAILABLE:
+            # 4. Simplification & Dynamic Shape Injections (사용자 옵션 및 가용성 확인)
+            if ONNXSIM_AVAILABLE and self.sim_var.get():
                 self.update_status("가변 차원 주입 및 최적화 중...", "#fbbf24")
                 try:
                     import onnx
