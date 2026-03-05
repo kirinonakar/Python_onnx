@@ -58,6 +58,11 @@ Real-ESRGAN is working well. Others are work in progress.
     pip install -r requirements.txt
     ```
 
+> [!IMPORTANT]
+> **Recommended Environment**: **PyTorch 2.4.1**
+> PyTorch 2.5 and later versions use a new exporter that often forces static shapes for complex models like SwinIR or HAT. For full **Dynamic Shape (variable resolution)** support, it is highly recommended to use **PyTorch 2.4.1**.
+
+
 ## 📜 License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.

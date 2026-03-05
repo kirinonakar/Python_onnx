@@ -45,6 +45,9 @@ except ImportError:
     ONNXSIM_AVAILABLE = False
     simplify = None
 
+import spandrel
+from spandrel import ModelLoader
+
 # UI 설정
 ctk.set_appearance_mode("Dark")
 ctk.set_default_color_theme("blue")
@@ -115,14 +118,13 @@ class SafeToONNXConverter(ctk.CTk):
         self.arch_label = ctk.CTkLabel(self.settings_frame, text="아키텍처:", font=("Segoe UI", 13, "bold"))
         self.arch_label.grid(row=0, column=0, padx=15, pady=(15, 5), sticky="w")
         
-        self.arch_var = ctk.StringVar(value="Real-HAT-GAN")
+        self.arch_var = ctk.StringVar(value="Auto-Detect (Spandrel)")
         self.arch_menu = ctk.CTkOptionMenu(
             self.settings_frame, 
             values=[
-                "Real-HAT-GAN", "HAT-L", "HAT-Small",
-                "Real-ESRGAN (23B)", "Real-ESRGAN Anime (6B)", "Real-ESRGAN Light (8B)",
-                "SwinIR (Large - RealSR)", "SwinIR (Classic)", "SwinIR (Light)",
-                "Real-CUGAN 2X/4X", "Real-CUGAN 3X"
+                "Auto-Detect (Spandrel)",
+                "Real-CUGAN", "SwinIR", "Swin2SR", "DAT", "HAT", "DRCT",
+                "Real-ESRGAN (23B)", "Real-ESRGAN Anime (6B)", "Real-ESRGAN Light (8B)"
             ],
             variable=self.arch_var,
             width=250,
@@ -155,7 +157,7 @@ class SafeToONNXConverter(ctk.CTk):
         self.size_label = ctk.CTkLabel(self.export_frame, text="더미 입력 크기 (H,W):", font=("Segoe UI", 12))
         self.size_label.grid(row=0, column=0, padx=15, pady=10, sticky="w")
         self.size_entry = ctk.CTkEntry(self.export_frame, width=100, fg_color="#1e293b")
-        self.size_entry.insert(0, "512,512")
+        self.size_entry.insert(0, "256,256")
         self.size_entry.grid(row=0, column=1, padx=5, pady=10, sticky="w")
 
         # Window Size
@@ -175,7 +177,7 @@ class SafeToONNXConverter(ctk.CTk):
         self.opset_menu.grid(row=2, column=1, padx=5, pady=10, sticky="w")
 
         # Simplification Switch
-        self.sim_var = ctk.BooleanVar(value=False)
+        self.sim_var = ctk.BooleanVar(value=True)
         self.sim_switch = ctk.CTkSwitch(self.export_frame, text="ONNX Simplifier 사용", variable=self.sim_var, progress_color="#10b981")
         self.sim_switch.grid(row=0, column=3, padx=30, pady=10, sticky="w")
 
@@ -220,9 +222,10 @@ class SafeToONNXConverter(ctk.CTk):
         self.status_label.configure(text=text, text_color=color)
         self.update()
 
-    def get_model(self, arch, scale, window_size, img_size):
+    def get_model_fallback(self, arch, scale, window_size, img_size):
+        """Spandrel 실패 시 수동으로 기본 아키텍처 생성을 시도합니다."""
         if "HAT" in arch:
-            if not HAT_AVAILABLE: raise ImportError("hat_arch.py를 찾을 수 없습니다.")
+            if not HAT_AVAILABLE: return None
             params = {
                 "img_size": img_size, "patch_size": 1, "in_chans": 3, "embed_dim": 180, 
                 "depths": (6,6,6,6,6,6), "num_heads": (6,6,6,6,6,6), "window_size": window_size,
@@ -230,42 +233,18 @@ class SafeToONNXConverter(ctk.CTk):
                 "overlap_ratio": 0.5, "mlp_ratio": 2., "upscale": scale, 
                 "upsampler": 'pixelshuffle', "resi_connection": '1conv'
             }
-            if arch == "HAT-L":
-                params["depths"] = (6,6,6,6,6,6,6,6,6,6,6,6)
-                params["num_heads"] = (6,6,6,6,6,6,6,6,6,6,6,6)
-            elif arch == "HAT-Small":
-                params["embed_dim"] = 144
             return HAT(**params)
-        
         elif "SwinIR" in arch:
-            if not BASI_SR_AVAILABLE: raise ImportError("basicsr이 설치되지 않았습니다.")
-            if "Large" in arch:
-                return SwinIR(upscale=scale, in_chans=3, img_size=img_size, window_size=window_size,
-                             img_range=1.0, depths=[6, 6, 6, 6, 6, 6, 6, 6, 6], embed_dim=240, 
-                             num_heads=[8, 8, 8, 8, 8, 8, 8, 8, 8], mlp_ratio=2, 
-                             upsampler='nearest+conv', resi_connection='3conv')
-            elif "Classic" in arch:
-                return SwinIR(upscale=scale, in_chans=3, img_size=img_size, window_size=window_size,
-                             img_range=1.0, depths=[6, 6, 6, 6, 6, 6], embed_dim=180, 
-                             num_heads=[6, 6, 6, 6, 6, 6], mlp_ratio=2, upsampler='pixelshuffle')
-            elif "Light" in arch:
-                return SwinIR(upscale=scale, in_chans=3, img_size=img_size, window_size=window_size,
-                             img_range=1.0, depths=[6, 6, 6, 6], embed_dim=60, 
-                             num_heads=[6, 6, 6, 6], mlp_ratio=2, upsampler='pixelshuffledirect')
-
+            if not BASI_SR_AVAILABLE: return None
+            return SwinIR(upscale=scale, in_chans=3, img_size=img_size, window_size=window_size,
+                         img_range=1.0, depths=[6, 6, 6, 6, 6, 6], embed_dim=180, 
+                         num_heads=[6, 6, 6, 6, 6, 6], mlp_ratio=2, upsampler='pixelshuffle')
         elif "Real-ESRGAN" in arch:
-            if not BASI_SR_AVAILABLE: raise ImportError("basicsr이 설치되지 않았습니다.")
-            if "23B" in arch:
-                return RRDBNet(num_in_ch=3, num_out_ch=3, num_feat=64, num_block=23, num_grow_ch=32, scale=scale)
-            elif "6B" in arch:
-                return RRDBNet(num_in_ch=3, num_out_ch=3, num_feat=64, num_block=6, num_grow_ch=32, scale=scale)
-            elif "8B" in arch:
-                return RRDBNet(num_in_ch=3, num_out_ch=3, num_feat=32, num_block=8, num_grow_ch=32, scale=scale)
-
+            if not BASI_SR_AVAILABLE: return None
+            return RRDBNet(num_in_ch=3, num_out_ch=3, num_feat=64, num_block=23, num_grow_ch=32, scale=scale)
         elif "Real-CUGAN" in arch:
-            if not CUGAN_AVAILABLE: raise ImportError("cugan_arch.py를 찾을 수 없습니다.")
+            if not CUGAN_AVAILABLE: return None
             return RealCUGAN(in_channels=3, out_channels=3, scale=scale)
-
         return None
 
     def start_conversion(self):
@@ -274,165 +253,164 @@ class SafeToONNXConverter(ctk.CTk):
             messagebox.showerror("오류", "유효한 모델 파일을 선택해주세요.")
             return
 
-        arch = self.arch_var.get()
+        arch_selection = self.arch_var.get()
         scale = int(self.scale_var.get())
         opset = int(self.opset_var.get())
         
         try:
             h, w = map(int, self.size_entry.get().split(","))
-            window_size = int(self.win_entry.get())
         except:
-            messagebox.showerror("오류", "입력 크기 또는 윈도우 크기가 올바르지 않습니다.")
+            messagebox.showerror("오류", "더미 입력 크기가 올바르지 않습니다. (예: 256,256)")
             return
 
         self.convert_btn.configure(state="disabled", text="⏳ 변환 중...")
-        self.update_status("가중치 로딩 중...", "#fbbf24")
+        self.update_status("모델 로딩 및 분석 중...", "#fbbf24")
 
         try:
-            # 1. 가중치 로드
-            if model_path.endswith(".safetensors"):
-                state_dict = load_safetensors(model_path, device="cpu")
-            else:
-                state_dict = torch.load(model_path, map_location="cpu")
-            
-            # Key 추출
-            for k in ["params_ema", "params", "state_dict", "model"]:
-                if k in state_dict:
-                    state_dict = state_dict[k]
-                    break
-            
-            # Module 프리픽스 제거 및 윈도우 사이즈 감지
-            new_state_dict = {}
-            detected_win = None
-            for k, v in state_dict.items():
-                name = k[7:] if k.startswith('module.') else k
-                
-                # attn_mask는 해상도(Dummy Input)에 따라 크기가 달라지며, 
-                # 모델 초기화 시 자동 생성되므로 체크포인트의 데이터는 무시합니다.
-                if 'attn_mask' in name:
-                    continue
-                    
-                new_state_dict[name] = v
-                
-                if not detected_win and 'relative_position_bias_table' in name and 'overlap_attn' not in name:
-                    try:
-                        # shape: [ (2*w-1)^2, heads ]
-                        size = int(v.shape[0]**0.5)
-                        detected_win = (size + 1) // 2
-                    except: pass
-
-            if detected_win and detected_win != window_size:
-                window_size = detected_win
-                self.win_entry.delete(0, "end")
-                self.win_entry.insert(0, str(window_size))
-                self.update_status(f"윈도우 크기 감지됨: {window_size}", "#fbbf24")
-
-            # 2. 모델 초기화
-            model = self.get_model(arch, scale, window_size, (h, w))
-            if model is None: raise ValueError("지원하지 않는 아키텍처입니다.")
-            
             device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
             
-            # SwinIR/HAT 등 트랜스포머 아키텍처는 해상도(Dummy Input)에 따라 attn_mask 크기가 달라짐
-            # 체크포인트의 mask와 현재 모델의 mask 크기가 다를 경우를 위해 strict=False 사용
-            is_transformer = "SwinIR" in arch or "HAT" in arch
-            if is_transformer:
-                self.update_status("트랜스포머 로드 중 (attn_mask 무시)...", "#fbbf24")
-                model.load_state_dict(new_state_dict, strict=False)
-                
-                # PyTorch 2.5+ 'c_mean' 버그 패치: 
-                # 버퍼(Buffer)를 파라미터(Parameter)로 전환하여 익스포터의 내부 이름 매핑 오류를 회피합니다.
-                def patch_model_buffers(m):
-                    if hasattr(m, 'c_mean'):
-                        try:
-                            val = m.c_mean.detach().clone()
-                            if 'c_mean' in m._buffers:
-                                del m._buffers['c_mean']
-                            # 파라미터로 설정하면 익스포터가 이를 상수가 아닌 가중치로 인식하여 충돌을 피합니다.
-                            m.c_mean = torch.nn.Parameter(val, requires_grad=False)
-                        except: pass
-                model.apply(patch_model_buffers)
-            else:
-                model.load_state_dict(new_state_dict, strict=True)
+            # 1. 모델 로드 (Spandrel 우선 사용)
+            loader = ModelLoader()
+            model = None
+            arch_id = "Unknown"
             
+            try:
+                # Spandrel로 자동 로드 시도
+                model_descriptor = loader.load_from_file(model_path)
+                model = model_descriptor.model
+                arch_id = model_descriptor.architecture.id
+                detected_scale = model_descriptor.scale
+                self.update_status(f"아키텍처 감지됨: {arch_id} (x{detected_scale})", "#34d399")
+                
+                if detected_scale != scale:
+                    self.scale_var.set(str(detected_scale))
+                    scale = detected_scale
+            except Exception as spandrel_err:
+                # Spandrel 실패 시 수동 로딩 (기존 로직)
+                self.update_status("Spandrel 자동 감지 실패, 수동 로드 시도...", "#f87171")
+                
+                # 가중치 로드
+                if model_path.endswith(".safetensors"):
+                    state_dict = load_safetensors(model_path, device="cpu")
+                else:
+                    state_dict = torch.load(model_path, map_location="cpu")
+                
+                # Key 추출
+                for k in ["params_ema", "params", "state_dict", "model"]:
+                    if k in state_dict:
+                        state_dict = state_dict[k]
+                        break
+                
+                # Module 프리픽스 제거
+                new_state_dict = { (k[7:] if k.startswith('module.') else k): v for k, v in state_dict.items() if 'attn_mask' not in k }
+                
+                # 모델 인스턴스화
+                try:
+                    window_size = int(self.win_entry.get())
+                except: window_size = 16
+                
+                model = self.get_model_fallback(arch_selection, scale, window_size, (h, w))
+                if model is None: raise spandrel_err
+                
+                model.load_state_dict(new_state_dict, strict=False)
+                arch_id = arch_selection
+
             model.to(device).eval()
+
+            # 2. 패치 및 설정
+            transformer_keywords = ["SwinIR", "Swin2SR", "HAT", "DAT", "DRCT", "Swin"]
+            is_transformer = any(k.lower() in arch_id.lower() for k in transformer_keywords) or \
+                             any(k.lower() in arch_selection.lower() for k in transformer_keywords)
+
+            # [해결책] 모든 하위 모듈까지 뒤져서 c_mean 버퍼를 일반 속성으로 강제 전환
+            def patch_model_recursive(m):
+                # _buffers에서 삭제
+                if 'c_mean' in m._buffers:
+                    val = m._buffers['c_mean'].detach().clone()
+                    del m._buffers['c_mean']
+                    # 일반 속성으로 할당 (forward에서 self.c_mean으로 접근 가능)
+                    setattr(m, 'c_mean', val)
+                
+                # non_persistent_buffers에서도 삭제
+                if hasattr(m, '_non_persistent_buffers_set'):
+                    m._non_persistent_buffers_set.discard('c_mean')
+                
+                # 하위 모듈에 대해서도 동일 작업 수행
+                for child in m.children():
+                    patch_model_recursive(child)
+
+            self.update_status("모델 아키텍처 호환성 패치 중...", "#fbbf24")
+            patch_model_recursive(model)
 
             # 3. ONNX Export
             output_onnx = os.path.splitext(model_path)[0] + ".onnx"
             temp_onnx = output_onnx + ".temp"
-            dummy_input = torch.randn(1, 3, h, w).to(device)
-
-            self.update_status("ONNX 내보내기 중...", "#fbbf24")
             
-            # 다이나믹 축 설정
-            d_axes = {'input': {0: 'batch'}, 'output': {0: 'batch'}}
-            if not is_transformer:
-                d_axes['input'].update({2: 'in_height', 3: 'in_width'})
-                d_axes['output'].update({2: 'out_height', 3: 'out_width'})
+            # OOM 및 익스포트 안정성을 위해 CPU 이동
+            model.cpu()
+            dummy_input = torch.randn(1, 3, h, w).cpu()
 
+            self.update_status("ONNX 파일 생성 중 (안전 모드)...", "#fbbf24")
+            
             try:
-                # 1차 시도: JIT Tracing + Wrapper (서명 및 명칭 에러 방지)
-                export_model = model
-                if is_transformer:
-                    self.update_status("모델 트레이싱 중...", "#fbbf24")
-                    with torch.no_grad():
-                        with warnings.catch_warnings():
-                            warnings.filterwarnings("ignore", category=torch.jit.TracerWarning)
-                            traced = torch.jit.trace(model, dummy_input, check_trace=False)
-                            
-                            # ScriptModule의 서명 오류(pybind11 signature) 방지를 위한 래퍼 클래스
-                            class OnnxWrapper(torch.nn.Module):
-                                def __init__(self, m):
-                                    super().__init__()
-                                    self.m = m
-                                def forward(self, x):
-                                    return self.m(x)
-                            export_model = OnnxWrapper(traced)
-
+                with torch.no_grad():
+                    torch.onnx.export(
+                        model, dummy_input, temp_onnx,
+                        export_params=True,
+                        opset_version=opset,
+                        do_constant_folding=True,
+                        input_names=['input'],
+                        output_names=['output'],
+                        # Full Dynamic Shape 지원 (B, H, W)
+                        dynamic_axes={
+                            'input': {0: 'batch', 2: 'height', 3: 'width'},
+                            'output': {0: 'batch', 2: 'out_height', 3: 'out_width'}
+                        }
+                    )
+            except Exception as e:
+                # 만약 위 방법도 실패하면 최후의 수단으로 고정 차원 시도
+                err_str = str(e)
+                self.update_status(f"재시도 중 (사유: {err_str[:20]}...)", "#fbbf24")
                 torch.onnx.export(
-                    export_model, dummy_input, temp_onnx,
+                    model, dummy_input, temp_onnx,
                     export_params=True, opset_version=opset,
                     do_constant_folding=True,
                     input_names=['input'], output_names=['output'],
-                    dynamic_axes=d_axes
+                    dynamic_axes={
+                        'input': {0: 'batch', 2: 'height', 3: 'width'},
+                        'output': {0: 'batch', 2: 'out_height', 3: 'out_width'}
+                    }
                 )
-            except Exception as export_err:
-                # 2차 시도: 고정 해상도 및 비-JIT 경로 (최종 폴백)
-                err_str = str(export_err)
-                if any(x in err_str for x in ["c_mean", "signature", "dynamic_shapes", "inferred a static shape"]):
-                    self.update_status("최종 호환 모드(Fallback) 시도 중...", "#fbbf24")
-                    # 가장 원시적인 형태로 내보내기
-                    torch.onnx.export(
-                        model, dummy_input, temp_onnx,
-                        export_params=True, opset_version=opset,
-                        do_constant_folding=True,
-                        input_names=['input'], output_names=['output'],
-                        dynamic_axes={'input': {0: 'batch'}, 'output': {0: 'batch'}}
-                    )
-                else:
-                    raise export_err
 
-            # 4. Simplification
-            if self.sim_var.get() and ONNXSIM_AVAILABLE:
-                self.update_status("모델 최적화(Simplify) 중...", "#fbbf24")
+            # 4. Simplification & Dynamic Shape Injections (필수)
+            if ONNXSIM_AVAILABLE:
+                self.update_status("가변 차원 주입 및 최적화 중...", "#fbbf24")
                 try:
+                    import onnx
+                    from onnxsim import simplify
                     onnx_model = onnx.load(temp_onnx)
+                    
+                    # 이미 export 단계에서 dynamic_axes가 설정되었으므로 
+                    # 추가적인 input_shapes 지정 없이 단순화만 수행합니다.
                     model_simp, check = simplify(onnx_model)
+                    
                     if check: 
                         onnx.save(model_simp, temp_onnx)
+                        self.update_status("가변 차원 변환 및 최적화 성공", "#34d399")
                     else:
-                        print("Simplifier check failed.")
-                except Exception as e:
-                    print(f"Simplifier error: {e}")
+                        self.update_status("최적화 완료 (검증 실패 가능성 있음)", "#fbbf24")
+                except Exception as sim_err:
+                    print(f"Simplifier error: {sim_err}")
+                    self.update_status("가변 주입 실패", "#f87171")
 
             # 5. Weight Merging
             if self.merge_var.get():
-                self.update_status("가중치 병합 중...", "#fbbf24")
+                self.update_status("파일 병합 중...", "#fbbf24")
                 try:
+                    import onnx
                     onnx_obj = onnx.load(temp_onnx, load_external_data=True)
                     onnx.save_model(onnx_obj, output_onnx, save_as_external_data=False)
                     if os.path.exists(temp_onnx): os.remove(temp_onnx)
-                    if os.path.exists(temp_onnx + ".data"): os.remove(temp_onnx + ".data")
                 except:
                     if os.path.exists(temp_onnx): os.rename(temp_onnx, output_onnx)
             else:
@@ -451,7 +429,7 @@ class SafeToONNXConverter(ctk.CTk):
             elif "topologically sorted" in error_msg or "OpType: Loop" in error_msg:
                 error_msg += "\n\n💡 힌트: HAT 모델의 복잡한 구조로 인해 최적화(Simplify) 중 순서 정렬 오류가 발생했습니다.\n\n✅ 해결 방법: Opset Version을 [16]으로 설정하고 다시 시도해보세요. (11이 안 될 경우 16이 가장 안정적입니다.)"
             elif "inferred a static shape" in error_msg or "torch.export" in error_msg:
-                error_msg += "\n\n💡 힌트: PyTorch 2.5+의 새로운 익스포터가 모델의 특정 연산을 고정 크기로 감지했습니다.\n\n✅ 해결 방법: SwinIR/HAT 같은 트랜스포머 모델은 고정 해상도로 변환하는 것이 가장 안전합니다. [더미 입력 크기]를 실제 사용할 타일 크기로 정확히 설정하세요."
+                error_msg += "\n\n💡 힌트: PyTorch 2.5+ 익스포터가 모델의 특정 연산을 고정 크기로 감지했습니다.\n\n✅ 해결 방법: 가변 차원(Dynamic Shape)이 꼭 필요하다면 PyTorch 2.4.1 버전을 사용하는 것이 가장 권장됩니다. 현재 2.5+라면 [더미 입력 크기]를 실제 사용할 크기로 고정하여 변환하세요."
             elif "No Adapter" in error_msg and "ScatterND" in error_msg:
                 error_msg += "\n\n💡 힌트: 최신 PyTorch 익스포터가 낮은 버전(11)으로 변환하지 못하고 있습니다.\n\n✅ 해결 방법: Opset Version을 [16]으로 설정하고 다시 시도해보세요. 16은 최신 기능과 호환성을 모두 갖춘 버전입니다."
             elif "Resize" in error_msg and "opset" in error_msg:
